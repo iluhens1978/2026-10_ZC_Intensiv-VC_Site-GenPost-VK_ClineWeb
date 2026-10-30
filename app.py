@@ -1,46 +1,106 @@
 """
-app.py — «ПостМастер»: генератор постов для товара.
+app.py — «ПостМастер AI»: генератор постов о товаре с помощью нейросети.
 
 Как это работает:
-1. Пользователь заполняет форму на сайте (название, описание, цена, настроение).
-2. Flask получает данные формы и вызывает функцию build_post().
-3. build_post() собирает текст по шаблону — правила берутся из файла voice.md.
-4. Готовый пост возвращается на страницу в блок «Готовый пост».
+1. Пользователь вставляет ссылку на товар с маркетплейса (Ozon, Wildberries,
+   Яндекс Маркет или любой другой магазин).
+2. Сайт скачивает страницу товара и достаёт из неё название, описание
+   и главную картинку (Open Graph-разметка или JSON-LD).
+3. Данные товара и настройки стиля из файла voice.md уходят в OpenRouter
+   (модель openrouter/free — бесплатный роутер моделей, Free Models Router).
+4. Нейросеть возвращает готовый пост, сайт показывает его в блоке «Готовый пост».
 
-Никаких API и баз данных: только Flask, Python и файл настроек voice.md.
-Запуск: python app.py  →  http://127.0.0.1:5000
+Ключ API лежит в отдельном файле секретов .env — он не попадает в репозиторий.
+Запуск: python app.py → http://127.0.0.1:5000
 """
 
+import html as html_module
+import json
+import random
 import re
 from pathlib import Path
+from urllib.parse import urlparse
 
+import requests
 from flask import Flask, render_template, request
 
 app = Flask(__name__)
 
-# ============================================================
-# 1. ПУТИ И ЗНАЧЕНИЯ ПО УМОЛЧАНИЮ
-# ============================================================
-
-# Папка, в которой лежит app.py (нужна, чтобы найти voice.md при любом запуске).
 BASE_DIR = Path(__file__).resolve().parent
 VOICE_FILE = BASE_DIR / "voice.md"
+SECRETS_FILE = BASE_DIR / ".env"
 
-# Настройки по умолчанию. Используются, если в voice.md чего-то не хватает.
-# Менять стиль постов лучше в voice.md — там всё по-человечески описано.
+
+# ============================================================
+# 1. СЕКРЕТЫ (файл .env) И НАСТРОЙКИ ПРИЛОЖЕНИЯ
+# ============================================================
+
+def load_secrets():
+    """Читает файл .env и возвращает словарь с ключами и настройками.
+
+    Формат файла — по одной настройке в строке: ИМЯ=значение.
+    Пустые строки и строки, которые начинаются с #, пропускаются.
+    """
+    secrets = {}
+    if not SECRETS_FILE.exists():
+        return secrets
+
+    for line in SECRETS_FILE.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        secrets[key.strip()] = value.strip().strip('"').strip("'")
+
+    return secrets
+
+
+# Все секреты и настройки читаются один раз при запуске сайта
+SECRETS = load_secrets()
+
+OPENROUTER_API_KEY = SECRETS.get("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL = SECRETS.get("OPENROUTER_MODEL") or "openrouter/free"
+OPENROUTER_URL = (
+    SECRETS.get("OPENROUTER_BASE_URL")
+    or "https://openrouter.ai/api/v1/chat/completions"
+)
+APP_URL = SECRETS.get("APP_URL") or "http://127.0.0.1:5000"
+APP_TITLE = SECRETS.get("APP_TITLE") or "PostMaster AI"
+
+
+def ascii_header(value, fallback="PostMaster AI"):
+    """HTTP-заголовки могут содержать только латиницу — лишние символы убираем."""
+    text = str(value).encode("ascii", "ignore").decode("ascii").strip()
+    return text or fallback
+
+# Заголовки «как у браузера»: некоторые магазины не отдают страницу роботам
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
+}
+
+
+# ============================================================
+# 2. НАСТРОЙКИ ГОЛОСА ИЗ ФАЙЛА voice.md
+# ============================================================
+
+# Если в voice.md чего-то не хватает — берутся эти значения
 DEFAULT_VOICE = {
-    "тон": "дружелюбный",
+    "тон": "дружелюбно и живо, как будто советуешь находку другу",
     "длина": "средняя",
     "эмодзи": "4",
     "стиль заголовка": "эмодзи + название",
-    "вступление": "",
-    "хэштеги": "",
+    "хэштеги": "да",
 }
 
-# Настроения, которые показываются, если voice.md не найден или пуст.
+# Настроения, которые показываются, если voice.md не найден или пуст
 DEFAULT_MOODS = ["Радостное", "Деловое", "Дерзкое", "Заботливое"]
 
-# Эмодзи для заголовка — по названию настроения.
+# Эмодзи для кнопок выбора настроения
 MOOD_EMOJI = {
     "радостное": "🎉",
     "деловое": "📈",
@@ -48,36 +108,15 @@ MOOD_EMOJI = {
     "заботливое": "🤗",
 }
 
-# Финальная фраза-подпись поста. Ключ — часть значения «тон» из voice.md.
-# Например, тон «дружелюбный» содержит «дружелюб» → берём первую фразу.
-TONE_SIGNS = (
-    ("дружелюб", "😊 Будем рады, если заглянете!"),
-    ("уверен", "✅ Качество проверено — уверенно рекомендуем."),
-    ("дерзк", "😎 Хватит думать — берите, пока есть."),
-    ("заботл", "🤗 Если появятся вопросы — напишите, с радостью поможем."),
-)
-DEFAULT_SIGN = "💬 Будем рады вашему заказу!"
-
-# Регулярное выражение для эмодзи (картинки + смайлики-символы).
-# Нужно, чтобы аккуратно ограничить количество эмодзи в посте.
-EMOJI_RE = re.compile(
-    r"[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\u2300-\u23FF]\uFE0F?"
-)
-
-
-# ============================================================
-# 2. ЧТЕНИЕ ФАЙЛА voice.md
-# ============================================================
 
 def load_voice():
     """
     Читает voice.md и возвращает два словаря:
       * общие настройки (блок «## Общие настройки»);
-      * настройки для каждого настроения (блоки «## Настроение: Радостное»).
+      * настройки каждого настроения (блоки «## Настроение: Радостное»).
 
-    Формат строки внутри блока: "ключ: значение".
-    Строки, которые начинаются с #, >, -, | или <!--, считаются подсказками
-    и программа их пропускает.
+    Внутри блока настройки записаны строками вида «ключ: значение».
+    Строки, которые начинаются с #, >, -, | или <!--, — подсказки, их пропускаем.
     """
     global_settings = {}
     moods = {}
@@ -90,30 +129,26 @@ def load_voice():
     for raw_line in VOICE_FILE.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
 
-        # Заголовок блока — решаем, что читаем дальше
         if line.startswith("## "):
             title = line[3:].strip()
             title_low = title.lower()
             if title_low.startswith("настроение:"):
-                # Пример: "## Настроение: Радостное" → название "Радостное"
+                # Пример: «## Настроение: Радостное» → название «Радостное»
                 mood_name = title.split(":", 1)[1].strip()
                 moods.setdefault(mood_name, {})
                 current = moods[mood_name]
             elif "общ" in title_low:
                 current = global_settings
             else:
-                current = None  # какой-то другой раздел — пропускаем
+                current = None  # другой раздел — пропускаем
             continue
 
-        # Всё, что вне нужного блока, не читаем
         if current is None:
             continue
 
-        # Подсказки, разделители и пустые строки пропускаем
         if not line or line[0] in "#>-|<" or line.startswith("```"):
             continue
 
-        # Строка настроек должна содержать двоеточие: "тон: дружелюбный"
         if ":" not in line:
             continue
 
@@ -124,15 +159,12 @@ def load_voice():
 
 
 def voice_settings(mood):
-    """
-    Собирает итоговые настройки для одного настроения:
-    значения по умолчанию → общие настройки из voice.md → блок настроения.
-    """
+    """Итоговые настройки настроения: по умолчанию → общие → блок настроения."""
     global_settings, moods = load_voice()
 
-    settings = dict(DEFAULT_VOICE)        # 1. база
-    settings.update(global_settings)      # 2. общие настройки из voice.md
-    settings.update(moods.get(mood, {}))  # 3. конкретное настроение
+    settings = dict(DEFAULT_VOICE)
+    settings.update(global_settings)
+    settings.update(moods.get(mood, {}))
 
     return settings
 
@@ -148,36 +180,8 @@ def mood_options():
     ]
 
 
-# ============================================================
-# 3. МЕЛКИЕ ПОМОЩНИКИ ДЛЯ ТЕКСТА
-# ============================================================
-
-def clean_text(text):
-    """Убирает лишние пробелы и переносы строк."""
-    return " ".join(text.split())
-
-
-def as_sentence(text):
-    """Делает из строки красивое предложение: с большой буквы и точкой в конце."""
-    text = text.strip()
-    if not text:
-        return ""
-    text = text[0].upper() + text[1:]
-    if text[-1] not in ".!?…":
-        text += "."
-    return text
-
-
-def truncate(text, limit):
-    """Обрезает текст по границе слова и добавляет многоточие."""
-    if len(text) <= limit:
-        return text
-    cut = text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:—–-")
-    return cut + "…"
-
-
 def normalize_length(value):
-    """Приводит значение настройки «длина» к одному из трёх вариантов."""
+    """Приводит настройку «длина» к одному из трёх вариантов."""
     value = str(value).lower()
     if "корот" in value:
         return "короткая"
@@ -192,155 +196,445 @@ def parse_emoji(value):
     return int(digits.group()) if digits else 4
 
 
-def limit_emoji(text, limit):
-    """Оставляет в тексте только первые `limit` эмодзи (остальные удаляет)."""
-    seen = [0]
-
-    def replace(match):
-        seen[0] += 1
-        return match.group(0) if seen[0] <= limit else ""
-
-    return EMOJI_RE.sub(replace, text)
-
-
 # ============================================================
-# 4. СБОРКА ПОСТА ПО ШАБЛОНУ
+# 3. ДАННЫЕ ТОВАРА ПО ССЫЛКЕ
 # ============================================================
 
-def build_heading(name, style, emoji):
-    """Первая строка поста. Оформление выбирает настройка «стиль заголовка»."""
-    title = name or "Новая находка"
-    style = str(style).lower()
-
-    if "вопрос" in style:
-        return f"Ищете: {title}?" if name else "Ищете что-то особенное?"
-    if "капс" in style:
-        return title.upper()
-    if "эмодзи" in style:
-        return f"{emoji} {title}"
-    return title  # стиль «просто»
+def normalize_url(raw):
+    """Приводит ссылку к виду https://... (если пользователь забыл протокол)."""
+    url = (raw or "").strip()
+    if not url:
+        return ""
+    if not re.match(r"^https?://", url, re.IGNORECASE):
+        url = "https://" + url.lstrip("/")
+    return url
 
 
-def build_price_line(price):
-    """Строка про цену или выгоду. Если поле пустое — строки не будет."""
-    price = clean_text(price)
-    if not price:
+def is_valid_url(url):
+    """Проверяет, что это похоже на адрес сайта."""
+    parsed = urlparse(url)
+    return parsed.scheme in ("http", "https") and "." in parsed.netloc
+
+
+def name_from_url(url):
+    """Пытается вытащить название товара из адреса страницы.
+
+    Например: /product/keramicheskaya-kruzhka-utro-123456/ → «keramicheskaya kruzhka utro».
+    """
+    parts = [part for part in urlparse(url).path.split("/") if part]
+    if not parts:
         return ""
 
-    # Слова, которые говорят о том, что это не цена, а выгода или акция
-    benefit_words = ("скидк", "акци", "выгод", "подар", "бесплат", "%")
+    slug = max(parts, key=len)  # самый длинный кусок адреса — обычно название
+    slug = re.sub(r"\.(html?|aspx|php)$", "", slug, flags=re.IGNORECASE)
+    slug = re.sub(r"[-_+]+", " ", slug)   # дефисы и подчёркивания → пробелы
+    slug = re.sub(r"\d{2,}", " ", slug)   # убираем длинные числа (артикулы)
+    slug = re.sub(r"\s+", " ", slug).strip()
 
-    has_digit = re.search(r"\d", price)
-    is_benefit = any(word in price.lower() for word in benefit_words)
-
-    if has_digit and not is_benefit:
-        return f"💰 Цена: {price}"
-    return f"🎁 Выгода: {price}"
-
-
-def tone_sign(tone):
-    """Финальная фраза поста — выбирается по настройке «тон»."""
-    tone = str(tone).lower()
-    for key, sign in TONE_SIGNS:
-        if key in tone:
-            return sign
-    return DEFAULT_SIGN
+    if not re.search(r"[a-zA-Zа-яА-Я]", slug):
+        return ""
+    return slug[:80]
 
 
-def build_post(name, description, price, mood):
+def _meta_content(html, key):
+    """Достаёт значение <meta property="og:title" content="...">.
+
+    Атрибуты могут идти в любом порядке, поэтому проверяем два варианта.
     """
-    Главная функция: собирает готовый пост из блоков.
+    patterns = (
+        rf'<meta[^>]+(?:property|name)=["\']{key}["\'][^>]*content=["\']([^"\']*)["\']',
+        rf'<meta[^>]+content=["\']([^"\']*)["\'][^>]*(?:property|name)=["\']{key}["\']',
+    )
+    for pattern in patterns:
+        found = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
+        if found:
+            return html_module.unescape(found.group(1)).strip()
+    return ""
 
-    Порядок блоков:
-      заголовок → вступление → описание → цена/выгода → финальная фраза → хэштеги.
-    Какие блоки попадут в пост, решают настройки из voice.md.
+
+def _find_product_in_json(data):
+    """Рекурсивно ищет в JSON-LD словарь с типом Product."""
+    if isinstance(data, list):
+        for item in data:
+            found = _find_product_in_json(item)
+            if found:
+                return found
+        return None
+
+    if isinstance(data, dict):
+        types = data.get("@type")
+        if types == "Product" or (isinstance(types, list) and "Product" in types):
+            return data
+        for value in data.values():
+            found = _find_product_in_json(value)
+            if found:
+                return found
+
+    return None
+
+
+def _jsonld_product(html):
+    """Ищет данные товара в блоках <script type="application/ld+json">."""
+    blocks = re.findall(
+        r'<script[^>]+application/ld\+json[^>]*>(.*?)</script>',
+        html,
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    for block in blocks:
+        try:
+            data = json.loads(block.strip())
+        except json.JSONDecodeError:
+            continue
+
+        product = _find_product_in_json(data)
+        if not product:
+            continue
+
+        image = product.get("image")
+        if isinstance(image, list):
+            image = image[0] if image else ""
+        if isinstance(image, dict):
+            image = image.get("url", "")
+
+        return {
+            "name": str(product.get("name") or "").strip(),
+            "description": str(product.get("description") or "").strip(),
+            "image": str(image or "").strip(),
+        }
+
+    return {"name": "", "description": "", "image": ""}
+
+
+def load_product(url):
     """
-    settings = voice_settings(mood)
+    Скачивает страницу товара и достаёт название, описание и главную картинку.
+
+    Возвращает словарь:
+      name        — название товара;
+      description — описание со страницы;
+      image       — ссылка на главную картинку;
+      read_ok     — True, если страницу удалось прочитать;
+      note        — пояснение для пользователя (что получилось, а что нет).
+    """
+    product = {"name": "", "description": "", "image": "", "read_ok": False, "note": ""}
+
+    try:
+        response = requests.get(
+            url,
+            headers=BROWSER_HEADERS,
+            timeout=15,
+            allow_redirects=True,
+        )
+        response.raise_for_status()
+    except requests.exceptions.RequestException as error:
+        # Маркетплейсы часто закрывают доступ роботам — это нормально,
+        # поэтому работаем дальше: название возьмём из адреса ссылки.
+        product["name"] = name_from_url(url)
+        status = getattr(getattr(error, "response", None), "status_code", None)
+        if status == 404:
+            product["note"] = (
+                "Страница не найдена (404). Проверьте ссылку — возможно, товар уже снят с продажи."
+            )
+        else:
+            product["note"] = (
+                "Магазин не отдал страницу роботу (так бывает у Ozon и Wildberries). "
+                "Нейросеть соберёт пост по ссылке и названию из адреса."
+            )
+        return product
+
+    page = page_text(response)
+    product["read_ok"] = True
+
+    # 1. Пробуем Open Graph-разметку и JSON-LD — их используют почти все магазины
+    jsonld = _jsonld_product(page)
+    name = _meta_content(page, "og:title") or jsonld["name"]
+    description = _meta_content(page, "og:description") or jsonld["description"]
+    image = _meta_content(page, "og:image") or jsonld["image"]
+
+    # 2. Запасные варианты: <title> и обычный description
+    if not name:
+        title = re.search(r"<title[^>]*>(.*?)</title>", page, re.IGNORECASE | re.DOTALL)
+        if title:
+            name = html_module.unescape(title.group(1)).strip()
+    if not description:
+        description = _meta_content(page, "description")
+
+    product["name"] = name[:300]
+    product["description"] = description[:1500]
+    product["image"] = _image_url(image)
+
+    if not product["name"]:
+        product["name"] = name_from_url(url)
+        product["note"] = "На странице не нашлось названия — взяли его из адреса ссылки."
+    if not product["image"]:
+        product["note"] = (
+            product["note"] or "Главную картинку найти не удалось, но название и описание есть."
+        )
+
+    return product
+
+
+def _image_url(image):
+    """Приводит ссылку на картинку к полному адресу (https://...)."""
+    image = (image or "").strip()
+    if image.startswith("//"):
+        return "https:" + image
+    if image.startswith("/"):
+        return ""  # относительные ссылки без домена не покажем
+    return image[:500]
+
+
+def page_text(response):
+    """Возвращает HTML страницы в правильной кодировке.
+
+    Если магазин не указал кодировку в заголовках, requests по умолчанию
+    считает её latin-1 — тогда русский текст превращается в «кракозябры».
+    Поэтому кодировку определяем по содержимому страницы.
+    """
+    encoding = (response.encoding or "").lower()
+    if encoding in ("", "iso-8859-1", "ascii"):
+        response.encoding = response.apparent_encoding or "utf-8"
+    return response.text
+
+
+# ============================================================
+# 4. ЗАПРОС К НЕЙРОСЕТИ ЧЕРЕЗ OPENROUTER
+# ============================================================
+
+SYSTEM_PROMPT = """Ты — креативный копирайтер и SMM-специалист.
+Ты пишешь живые посты о товарах для социальных сетей (ВКонтакте, Telegram) на русском языке.
+
+Жёсткие правила:
+1. Пиши только на русском языке.
+2. Не выдумывай факты: цены, скидки, характеристики, сроки доставки и гарантии.
+   Если данных нет — пиши эмоционально и образно, но без конкретных цифр.
+3. Избегай шаблонных рекламных фраз: «не упустите возможность», «идеальное решение»,
+   «качественный товар», «широкий ассортимент», «спешите заказать».
+4. Не используй markdown: никаких **звёздочек**, ## заголовков и списков с тире.
+5. В ответе — только текст поста. Без пояснений и без кавычек вокруг текста.
+"""
+
+# Творческие приёмы: каждый раз выбирается случайный,
+# поэтому два поста по одной ссылке получаются разными
+CREATIVE_ANGLES = (
+    "личная история «как я искал(а) такой товар»",
+    "неожиданное сравнение с чем-то из быта",
+    "вопрос-крючок в первой строке",
+    "мини-сценка из жизни покупателя",
+    "короткий дружеский совет",
+    "лёгкая самоирония и юмор",
+    "честный разбор «кому подойдёт, а кому нет»",
+    "неожиданный факт о пользе такого товара",
+)
+
+LENGTH_HINTS = {
+    "короткая": "2–4 коротких предложения, без списков",
+    "средняя": "5–8 предложений в 1–2 абзаца",
+    "длинная": "10–14 предложений в 2–3 абзаца",
+}
+
+
+class AiError(Exception):
+    """Ошибка при обращении к нейросети — с понятным текстом для пользователя."""
+
+
+def style_instructions(settings):
+    """Превращает настройки из voice.md в инструкции для нейросети."""
     length = normalize_length(settings["длина"])
     emoji_count = parse_emoji(settings["эмодзи"])
-    emoji = MOOD_EMOJI.get(str(mood).lower(), "✨")
+    heading = str(settings["стиль заголовка"]).lower()
+    hashtags = str(settings.get("хэштеги", "")).lower()
 
-    parts = []
+    if "вопрос" in heading:
+        heading_rule = "первая строка — короткий вопрос к читателю (до 8 слов)"
+    elif "капс" in heading:
+        heading_rule = "первая строка — заголовок КАПСЛОКОМ, до 5 слов"
+    elif "эмодзи" in heading:
+        heading_rule = "первая строка — короткий заголовок, который начинается с одного эмодзи"
+    else:
+        heading_rule = "первая строка — короткий заголовок без эмодзи"
 
-    # 1. Заголовок
-    parts.append(build_heading(name, settings["стиль заголовка"], emoji))
+    if emoji_count <= 0:
+        emoji_rule = "эмодзи не используй совсем"
+    else:
+        emoji_rule = f"не больше {emoji_count} эмодзи во всём тексте"
 
-    # 2. Вступление — живая фраза из voice.md (в коротком посте не нужна)
-    if length != "короткая" and settings.get("вступление"):
-        parts.append(as_sentence(settings["вступление"]))
+    if hashtags.startswith("нет") or hashtags == "no":
+        hashtag_rule = "хэштеги в конце не добавляй"
+    else:
+        hashtag_rule = "в конце добавь 3–5 коротких хэштегов в одну строку"
 
-    # 3. Описание товара — главный блок
-    body = clean_text(description)
-    if length == "короткая":
-        body = truncate(body, 180)  # короткий пост — обрезаем описание
-    parts.append(as_sentence(body))
-
-    # 4. Цена или выгода
-    price_line = build_price_line(price)
-    if price_line:
-        parts.append(price_line)
-
-    # 5. Финальная фраза-подпись (по настройке «тон»)
-    if length != "короткая":
-        parts.append(tone_sign(settings["тон"]))
-
-    # 6. Хэштеги — только в длинном посте
-    if length == "длинная" and settings.get("хэштеги"):
-        parts.append(settings["хэштеги"])
-
-    post = "\n\n".join(part for part in parts if part)
-
-    # Ограничиваем количество эмодзи и убираем лишние пробелы после чистки
-    post = limit_emoji(post, emoji_count)
-    post = re.sub(r"[ \t]{2,}", " ", post)
-    post = re.sub(r"[ \t]+\n", "\n", post)
-    post = re.sub(r"\n{3,}", "\n\n", post)
-
-    return post.strip(), settings
+    return "\n".join(
+        (
+            f"- Эмоция поста: {settings['тон']}",
+            f"- Длина: {LENGTH_HINTS[length]}",
+            f"- Эмодзи: {emoji_rule}",
+            f"- Заголовок: {heading_rule}",
+            f"- Хэштеги: {hashtag_rule}",
+        )
+    )
 
 
-def settings_for_screen(settings):
-    """Короткая подпись настроек для блока «Готовый пост» — видно, что взято из voice.md."""
-    return [
-        ("Тон", settings["тон"]),
-        ("Длина", normalize_length(settings["длина"])),
-        ("Эмодзи", str(parse_emoji(settings["эмодзи"]))),
-        ("Заголовок", settings["стиль заголовка"]),
-    ]
+def build_user_prompt(product, url, note, mood, angle, settings):
+    """Собирает запрос для нейросети из данных товара и настроек стиля."""
+    lines = [f"Напиши один пост о товаре. Настроение поста: {mood}.", "", "Данные о товаре:"]
+    lines.append(f"- Ссылка: {url}")
+    lines.append(f"- Название: {product['name'] or 'неизвестно (определи по ссылке)'}")
+
+    if product["description"]:
+        lines.append(f"- Описание со страницы: {product['description']}")
+    else:
+        lines.append("- Описание со страницы: недоступно (не выдумывай характеристики)")
+
+    if note:
+        lines.append(f"- Пожелание автора: {note}")
+
+    lines += ["", "Настройки стиля (из файла voice.md):", style_instructions(settings)]
+    lines += ["", f"Творческий приём для этого варианта: {angle}."]
+    lines.append("Сделай текст живым, интересным и непохожим на обычную рекламу.")
+
+    return "\n".join(lines)
+
+
+def clean_ai_text(text):
+    """Убирает кавычки, markdown и служебные подписи вокруг ответа модели."""
+    text = (text or "").strip()
+    text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    text = re.sub(
+        r"^(готовый пост|текст поста|пост|вариант поста)\s*[:\-]\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if len(text) > 1 and text[0] in "«\"“" and text[-1] in "»\"”":
+        text = text[1:-1].strip()
+    return re.sub(r"\n{3,}", "\n\n", text)
+
+
+def ask_model(user_prompt):
+    """Отправляет запрос в OpenRouter. Возвращает (текст поста, название модели)."""
+    if not OPENROUTER_API_KEY:
+        raise AiError(
+            "Не найден ключ OpenRouter. Откройте файл .env в папке проекта, "
+            "вставьте ключ в строку OPENROUTER_API_KEY=... и перезапустите сайт."
+        )
+
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.9,  # выше значение — разнообразнее и креативнее тексты
+        "max_tokens": 700,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": ascii_header(APP_URL, "http://127.0.0.1:5000"),
+        "X-Title": ascii_header(APP_TITLE),  # необязательно, название приложения
+    }
+
+    try:
+        response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=90)
+    except requests.exceptions.Timeout:
+        raise AiError("Нейросеть не ответила за 90 секунд. Попробуйте ещё раз.")
+    except (requests.exceptions.RequestException, UnicodeError) as error:
+        raise AiError(f"Не удалось связаться с OpenRouter: {error}")
+
+    # Понятные подсказки для частых ошибок
+    if response.status_code == 401:
+        raise AiError("OpenRouter не принял ключ (ошибка 401). Проверьте ключ в файле .env.")
+    if response.status_code == 402:
+        raise AiError("На счёте OpenRouter закончились кредиты (ошибка 402).")
+    if response.status_code == 429:
+        raise AiError(
+            "Слишком много запросов к бесплатным моделям (ошибка 429). "
+            "Подождите минуту и попробуйте снова."
+        )
+    if response.status_code != 200:
+        raise AiError(f"OpenRouter вернул ошибку {response.status_code}. Попробуйте ещё раз.")
+
+    try:
+        data = response.json()
+        content = data["choices"][0]["message"]["content"]
+        model_name = data.get("model", OPENROUTER_MODEL)
+    except (ValueError, KeyError, IndexError, TypeError):
+        raise AiError("Ответ нейросети пришёл в неожиданном формате. Попробуйте ещё раз.")
+
+    post = clean_ai_text(content)
+    if not post:
+        raise AiError("Нейросеть вернула пустой ответ. Попробуйте ещё раз.")
+
+    return post, model_name
 
 
 # ============================================================
 # 5. МАРШРУТ САЙТА
 # ============================================================
 
+def settings_for_screen(settings):
+    """Короткая подпись настроек для панели «Голос поста (из voice.md)»."""
+    tone = str(settings["тон"])
+    if len(tone) > 44:  # длинное описание тона аккуратно сокращаем
+        tone = tone[:44].rstrip() + "…"
+
+    return [
+        ("Тон", tone),
+        ("Длина", normalize_length(settings["длина"])),
+        ("Эмодзи", str(parse_emoji(settings["эмодзи"]))),
+        ("Заголовок", settings["стиль заголовка"]),
+    ]
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
-    """Главная страница: показывает форму и (если получилось) готовый пост."""
+    """Главная страница: ссылка на товар → пост от нейросети."""
     moods = mood_options()
-    form = {"name": "", "description": "", "price": "", "mood": moods[0]["name"]}
+    form = {"url": "", "note": "", "mood": moods[0]["name"]}
+
     post = ""
-    warning = ""
+    warning = ""    # подсказка про пустую или неправильную ссылку
+    error_text = ""  # ошибка нейросети
+    product = None
+    model_name = ""
+    angle = ""
 
     if request.method == "POST":
-        # Забираем данные из формы
-        form["name"] = request.form.get("name", "").strip()
-        form["description"] = request.form.get("description", "").strip()
-        form["price"] = request.form.get("price", "").strip()
+        form["url"] = request.form.get("url", "").strip()
+        form["note"] = request.form.get("note", "").strip()[:300]
 
         chosen = request.form.get("mood", "").strip()
         known = [mood["name"] for mood in moods]
         form["mood"] = chosen if chosen in known else moods[0]["name"]
 
-        # Проверка обязательного поля: без описания пост не собрать
-        if not form["description"]:
+        url = normalize_url(form["url"])
+
+        if not form["url"]:
+            warning = "Вставьте ссылку на товар — без неё нейросети нечего обрабатывать."
+        elif not is_valid_url(url):
             warning = (
-                "Заполните описание товара — это обязательное поле, "
-                "без него пост не собрать."
+                "Это не похоже на ссылку. Пример: "
+                "https://www.ozon.ru/product/keramicheskaya-kruzhka-123456/"
             )
         else:
-            post, _ = build_post(
-                form["name"], form["description"], form["price"], form["mood"]
+            settings = voice_settings(form["mood"])
+            angle = random.choice(CREATIVE_ANGLES)  # каждый пост получается другим
+
+            # 1. Достаём данные товара со страницы
+            product = load_product(url)
+
+            # 2. Просим нейросеть написать пост
+            prompt = build_user_prompt(
+                product, url, form["note"], form["mood"], angle, settings
             )
+            try:
+                post, model_name = ask_model(prompt)
+            except AiError as ai_error:
+                error_text = str(ai_error)
 
     settings = voice_settings(form["mood"])
 
@@ -350,11 +644,16 @@ def index():
         moods=moods,
         post=post,
         warning=warning,
+        error_text=error_text,
+        product=product,
+        model_name=model_name,
+        angle=angle,
         voice_view=settings_for_screen(settings),
+        ai_model=OPENROUTER_MODEL,
+        has_key=bool(OPENROUTER_API_KEY),
     )
 
 
 # Запуск сервера: python app.py → http://127.0.0.1:5000
 if __name__ == "__main__":
     app.run(debug=True)
-

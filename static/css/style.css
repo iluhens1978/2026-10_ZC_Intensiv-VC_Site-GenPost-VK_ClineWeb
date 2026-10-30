@@ -572,3 +572,147 @@ code {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ---------- 8. НОВОЕ ДЛЯ ИИ-ВЕРСИИ: карточка товара, алерты, загрузка ---------- */
+
+/* Карточка товара, которую удалось прочитать по ссылке */
+.product {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.product__image {
+  flex: 0 0 86px;
+  width: 86px;
+  height: 86px;
+  border-radius: 12px;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Если картинка не загрузилась — прячем её */
+.product__image--broken {
+  display: none;
+}
+
+.product__info {
+  min-width: 0;
+}
+
+.product__name {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.product__text {
+  margin: 0 0 6px;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+
+.product__note {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(167, 163, 194, 0.75);
+}
+
+.product__hint {
+  margin: -6px 0 14px;
+  font-size: 12.5px;
+  color: rgba(255, 209, 128, 0.9);
+}
+
+/* Варианты предупреждений: обычное (янтарное), ошибка (красное), инфо (фиолетовое) */
+.alert {
+  border-color: rgba(255, 199, 92, 0.45);
+  background: rgba(255, 199, 92, 0.12);
+}
+
+.alert--error {
+  border-color: rgba(255, 107, 107, 0.5);
+  background: rgba(255, 107, 107, 0.14);
+}
+
+.alert--info {
+  border-color: rgba(139, 92, 255, 0.5);
+  background: rgba(139, 92, 255, 0.14);
+}
+
+.alert p {
+  margin: 0;
+}
+
+.alert--info .alert__text {
+  color: #e7dcff;
+}
+
+.alert--error .alert__text {
+  color: #ffd7d7;
+}
+
+/* Кнопка в состоянии загрузки */
+.button--primary {
+  position: relative;
+}
+
+.button__spinner {
+  display: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.button.is-loading {
+  pointer-events: none;
+  filter: grayscale(0.25);
+}
+
+.button.is-loading .button__spinner {
+  display: inline-block;
+}
+
+.button.is-loading .button__icon {
+  display: none;
+}
+
+.form__loading {
+  display: none;
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.form__loading.is-visible {
+  display: block;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Кнопка «Сгенерировать другой вариант» и подпись модели */
+.result__again {
+  margin-top: 12px;
+  text-align: center;
+}
+
+.link-button--inline {
+  font-size: 14px;
+}
+
+.result__meta {
+  margin: 14px 0 0;
+  font-size: 12.5px;
+  color: rgba(167, 163, 194, 0.8);
+}

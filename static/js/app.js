@@ -1,8 +1,8 @@
 /* ============================================================
-   app.js — маленькие улучшения страницы.
+   app.js — небольшие улучшения страницы.
    Здесь всего две функции:
    1. копирование готового поста в буфер обмена;
-   2. кнопка «Заполнить примером» (чтобы быстро попробовать генератор).
+   2. состояние загрузки, пока нейросеть пишет текст.
    ============================================================ */
 
 // ---------- 1. Копирование поста ----------
@@ -54,21 +54,27 @@ function showCopied() {
   }, 2500);
 }
 
-// ---------- 2. Кнопка «Заполнить примером» ----------
-const exampleButton = document.querySelector("[data-example]");
+// ---------- 2. Загрузка, пока нейросеть пишет пост ----------
+const forms = document.querySelectorAll("[data-form]");
+const loadingHint = document.querySelector("[data-loading]");
 
-if (exampleButton) {
-  exampleButton.addEventListener("click", () => {
-    document.getElementById("name").value = "Керамическая кружка «Утро»";
-    document.getElementById("description").value =
-      "Кружка из плотной керамики с матовой глазурью. Держит тепло до 40 минут, " +
-      "удобно лежит в руке и не скользит. Подойдёт для кофе, чая и какао — " +
-      "а ещё это отличный подарок коллеге или другу.";
-    document.getElementById("price").value = "1 490 ₽";
+forms.forEach((form) => {
+  const submitButton = form.querySelector("[data-submit]");
 
-    // Убираем красную подсветку, если она осталась после проверки
-    const description = document.getElementById("description");
-    description.removeAttribute("aria-invalid");
-    description.focus();
+  if (!submitButton) return;
+
+  form.addEventListener("submit", () => {
+    submitButton.classList.add("is-loading");
+    submitButton.disabled = true; // защита от двойного нажатия
+
+    if (loadingHint) {
+      loadingHint.classList.add("is-visible");
+    }
+
+    // Если ответа нет дольше 100 секунд — возвращаем кнопку в рабочее состояние
+    setTimeout(() => {
+      submitButton.classList.remove("is-loading");
+      submitButton.disabled = false;
+    }, 100000);
   });
-}
+});

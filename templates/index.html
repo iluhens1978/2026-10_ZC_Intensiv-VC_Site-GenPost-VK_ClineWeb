@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ПостМастер — генератор постов для товара</title>
+  <title>ПостМастер AI — генератор постов о товаре</title>
   <!-- Стили лежат в static/css/style.css -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
@@ -18,10 +18,11 @@
   <div class="page">
 
     <header class="hero">
-      <span class="hero__badge">Flask · шаблон · без API</span>
-      <h1 class="hero__title">ПостМастер</h1>
+      <span class="hero__badge">Flask · OpenRouter · {{ ai_model }}</span>
+      <h1 class="hero__title">ПостМастер AI</h1>
       <p class="hero__lead">
-        Опишите товар — сайт соберёт готовый пост для соцсетей за один клик.
+        Вставьте ссылку на товар с маркетплейса — нейросеть прочитает название,
+        описание и фото, а затем напишет живой пост для соцсетей.
       </p>
     </header>
 
@@ -29,9 +30,21 @@
 
       <!-- ============ ЛЕВАЯ КОЛОНКА: ФОРМА ============ -->
       <section class="card card--form">
-        <h2 class="card__title">Данные товара</h2>
+        <h2 class="card__title">Товар</h2>
 
-        <!-- Предупреждение. Появляется, если описание товара не заполнено -->
+        {% if not has_key %}
+        <!-- Показывается, если в файле .env нет ключа OpenRouter -->
+        <div class="alert alert--info" role="status">
+          <span class="alert__icon" aria-hidden="true">🔑</span>
+          <p class="alert__text">
+            Ключ OpenRouter не найден. Откройте файл <code>.env</code> в папке проекта,
+            вставьте ключ в строку <code>OPENROUTER_API_KEY=...</code>
+            и перезапустите сайт.
+          </p>
+        </div>
+        {% endif %}
+
+        <!-- Предупреждение о пустой или неправильной ссылке -->
         {% if warning %}
         <div class="alert" role="alert">
           <span class="alert__icon" aria-hidden="true">⚠️</span>
@@ -39,51 +52,51 @@
         </div>
         {% endif %}
 
+        <!-- Ошибка нейросети (ключ, лимиты, сеть) -->
+        {% if error_text %}
+        <div class="alert alert--error" role="alert">
+          <span class="alert__icon" aria-hidden="true">🛑</span>
+          <p class="alert__text">{{ error_text }}</p>
+        </div>
+        {% endif %}
+
         <!-- novalidate: проверку делает Flask, чтобы предупреждение было нашим -->
-        <form class="form" method="post" action="{{ url_for('index') }}" novalidate>
+        <form class="form" method="post" action="{{ url_for('index') }}" novalidate data-form>
 
-          <!-- Название товара (необязательное) -->
+          <!-- Ссылка на товар (обязательная) -->
           <div class="field">
-            <label class="field__label" for="name">Название товара</label>
-            <input
-              class="input"
-              type="text"
-              id="name"
-              name="name"
-              value="{{ form.name }}"
-              maxlength="80"
-              placeholder="Например: Керамическая кружка «Утро»">
-          </div>
-
-          <!-- Описание товара (обязательное) -->
-          <div class="field">
-            <label class="field__label" for="description">
-              Описание товара
+            <label class="field__label" for="url">
+              Ссылка на товар
               <span class="required" title="Обязательное поле">*</span>
             </label>
-            <textarea
-              class="input input--area"
-              id="description"
-              name="description"
-              rows="5"
-              maxlength="1200"
-              placeholder="Что это за товар, для кого он и чем полезен"
-              required
-              {% if warning %}autofocus aria-invalid="true"{% endif %}>{{ form.description }}</textarea>
-            <p class="field__hint">Обязательное поле — расскажите о товаре своими словами.</p>
-          </div>
-
-          <!-- Цена или выгода (необязательное) -->
-          <div class="field">
-            <label class="field__label" for="price">Цена или выгода</label>
             <input
               class="input"
               type="text"
-              id="price"
-              name="price"
-              value="{{ form.price }}"
-              maxlength="80"
-              placeholder="2 990 ₽ или «скидка 20% до пятницы»">
+              id="url"
+              name="url"
+              value="{{ form.url }}"
+              placeholder="https://www.ozon.ru/product/keramicheskaya-kruzhka-123456/"
+              inputmode="url"
+              required
+              {% if warning %}autofocus aria-invalid="true"{% endif %}>
+            <p class="field__hint">
+              Подойдёт ссылка с Ozon, Wildberries, Яндекс Маркета или любого
+              другого магазина со страницей товара.
+            </p>
+          </div>
+
+          <!-- Необязательное пожелание к посту -->
+          <div class="field">
+            <label class="field__label" for="note">Что важно упомянуть</label>
+            <input
+              class="input"
+              type="text"
+              id="note"
+              name="note"
+              value="{{ form.note }}"
+              maxlength="300"
+              placeholder="Например: сделать акцент на подарке к 8 марта">
+            <p class="field__hint">Необязательно — можно оставить пустым.</p>
           </div>
 
           <!-- Настроение поста: варианты приходят из voice.md -->
@@ -107,14 +120,18 @@
             </div>
           </fieldset>
 
-          <button class="button button--primary" type="submit">
-            <span class="button__icon" aria-hidden="true">✨</span>
-            Сформировать пост
+          <button class="button button--primary" type="submit" data-submit>
+            <span class="button__spinner" aria-hidden="true"></span>
+            <span class="button__label">
+              <span class="button__icon" aria-hidden="true">✨</span>
+              Сформировать пост
+            </span>
           </button>
 
-          <button class="link-button" type="button" data-example>
-            Заполнить примером
-          </button>
+          <!-- Появляется, пока нейросеть пишет текст -->
+          <p class="form__loading" data-loading>
+            Нейросеть придумывает пост… Обычно это занимает 5–30 секунд.
+          </p>
         </form>
       </section>
 
@@ -127,8 +144,30 @@
           {% endif %}
         </div>
 
+        {% if product %}
+        <!-- Что удалось прочитать со страницы товара -->
+        <article class="product">
+          {% if product.image %}
+          <img class="product__image" src="{{ product.image }}" alt="Фото товара" loading="lazy"
+               onerror="this.classList.add('product__image--broken')">
+          {% endif %}
+          <div class="product__info">
+            <p class="product__name">{{ product.name or 'Название не найдено' }}</p>
+            {% if product.description %}
+            <p class="product__text">{{ product.description|truncate(180, True, '…') }}</p>
+            {% endif %}
+            <p class="product__note">
+              {% if product.read_ok %}📖 Данные взяты со страницы товара{% else %}🔗 Данные взяты из ссылки{% endif %}
+            </p>
+          </div>
+        </article>
+
+        {% if product.note %}
+        <p class="product__hint">{{ product.note }}</p>
+        {% endif %}
+        {% endif %}
+
         {% if post %}
-        <!-- Сам текст поста. white-space: pre-wrap сохраняет переносы строк -->
         <article class="post" id="post-text">{{ post }}</article>
 
         <div class="result__actions">
@@ -139,17 +178,31 @@
           <!-- Сюда JavaScript выводит сообщение «Пост скопирован» -->
           <span class="copy-status" id="copy-status" role="status" aria-live="polite"></span>
         </div>
+
+        <!-- Ещё один вариант: тот же товар, но другой творческий приём -->
+        <form class="result__again" method="post" action="{{ url_for('index') }}" data-form>
+          <input type="hidden" name="url" value="{{ form.url }}">
+          <input type="hidden" name="note" value="{{ form.note }}">
+          <input type="hidden" name="mood" value="{{ form.mood }}">
+          <button class="link-button link-button--inline" type="submit" data-submit>
+            🔄 Сгенерировать другой вариант
+          </button>
+        </form>
+
+        <p class="result__meta">
+          Модель: <code>{{ model_name }}</code>
+          {% if angle %} · приём: {{ angle }}{% endif %}
+        </p>
         {% else %}
-        <!-- Пустое состояние: пост ещё не сформирован -->
         <div class="post post--empty">
           <p>
             Здесь появится готовый пост.<br>
-            Заполните описание товара и нажмите «Сформировать пост».
+            Вставьте ссылку на товар и нажмите «Сформировать пост».
           </p>
         </div>
         {% endif %}
 
-        <!-- Какие настройки применились — берутся из voice.md -->
+        <!-- Какие настройки стиля применились — берутся из voice.md -->
         <div class="voice">
           <p class="voice__title">Голос поста (из voice.md)</p>
           <ul class="voice__list">
@@ -167,8 +220,8 @@
 
     <footer class="footer">
       <p>
-        Стиль постов настраивается в файле <code>voice.md</code>:
-        тон, длина, количество эмодзи и стиль заголовка.
+        Ключ API хранится в файле <code>.env</code> (он не попадает в git).
+        Стиль постов настраивается в <code>voice.md</code>.
       </p>
     </footer>
   </div>
