@@ -416,13 +416,16 @@ SYSTEM_PROMPT = """Ты — креативный копирайтер и SMM-с�
 Ты пишешь живые посты о товарах для социальных сетей (ВКонтакте, Telegram) на русском языке.
 
 Жёсткие правила:
-1. Пиши только на русском языке.
+1. Пиши только по-русски. Никаких английских слов, латиницы и транслита
+   (исключение — название товара, если оно само написано латиницей).
 2. Не выдумывай факты: цены, скидки, характеристики, сроки доставки и гарантии.
    Если данных нет — пиши эмоционально и образно, но без конкретных цифр.
 3. Избегай шаблонных рекламных фраз: «не упустите возможность», «идеальное решение»,
    «качественный товар», «широкий ассортимент», «спешите заказать».
-4. Не используй markdown: никаких **звёздочек**, ## заголовков и списков с тире.
-5. В ответе — только текст поста. Без пояснений и без кавычек вокруг текста.
+4. Не вставляй в текст ссылки и адреса сайтов — читатель получит их отдельно.
+5. Не используй markdown: никаких **звёздочек**, ## заголовков и списков с тире.
+6. В ответе — только текст поста. Без пояснений, без подписей «Хэштеги:»,
+   без комментариев о том, что ты сделал.
 """
 
 # Творческие приёмы: каждый раз выбирается случайный,
@@ -508,8 +511,10 @@ def build_user_prompt(product, url, note, mood, angle, settings):
 
 
 def clean_ai_text(text):
-    """Убирает кавычки, markdown и служебные подписи вокруг ответа модели."""
+    """Убирает кавычки, markdown, ссылки и служебные подписи вокруг ответа модели."""
     text = (text or "").strip()
+
+    # 1. Обёртки вида ```текст``` и подписи «Готовый пост:»
     text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
     text = re.sub(
@@ -518,9 +523,36 @@ def clean_ai_text(text):
         text,
         flags=re.IGNORECASE,
     )
+
+    # 2. Ссылки внутри поста не нужны — они и так есть в карточке товара
+    text = re.sub(r"https?://\S+", "", text)
+
+    # 2а. Управляющие символы: некоторые провайдеры добавляют в ответ
+    # «мусорные» нули и другие невидимые символы — вырезаем их
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+    text = text.replace("\t", " ")
+
+    # 3. Остатки markdown: **жирный**, ## заголовки, подпись «Хэштеги:»
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = re.sub(r"(?m)^#{1,6}\s+", "", text)  # «## Заголовок» → «Заголовок», но «#хэштег» не трогаем
+    text = re.sub(r"(?mi)^(хэштеги|теги)\s*:\s*", "", text)
+
+    # 4. Лишние пробелы и пустые строки
+    text = "\n".join(line.rstrip() for line in text.splitlines())
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]+([.,!?…])", r"\1", text)  # «слово .» → «слово.»
+
+    # 5. Кавычки вокруг всего текста
     if len(text) > 1 and text[0] in "«\"“" and text[-1] in "»\"”":
         text = text[1:-1].strip()
-    return re.sub(r"\n{3,}", "\n\n", text)
+
+    return text.strip()
+
+
+# Бесплатные модели иногда «думают» и возвращают пустой текст,
+# поэтому запрос повторяется. Роутер каждый раз выбирает другую модель.
+MAX_ATTEMPTS = 3
 
 
 def ask_model(user_prompt):
@@ -540,7 +572,8 @@ def ask_model(user_prompt):
             {"role": "user", "content": user_prompt},
         ],
         "temperature": 0.9,  # выше значение — разнообразнее и креативнее тексты
-        "max_tokens": 700,
+        "max_tokens": 1200,  # запас токенов: часть моделей тратит их на «размышления»
+        "reasoning": {"effort": "low"},  # просим модели не растекаться мыслью
     }
 
     headers = {
@@ -550,8 +583,24 @@ def ask_model(user_prompt):
         "X-Title": ascii_header(config["app_title"]),  # необязательно, название приложения
     }
 
+    for _ in range(MAX_ATTEMPTS):
+        content, model_name = _send_request(config["url"], headers, payload)
+        post = clean_ai_text(content)
+
+        if post:
+            return post, model_name
+        # Пустой ответ (модель потратила лимит на размышления) — пробуем ещё раз
+
+    raise AiError(
+        "Бесплатные модели не смогли ответить с первого раза. "
+        "Нажмите «Сформировать пост» ещё раз."
+    )
+
+
+def _send_request(url, headers, payload):
+    """Один запрос к OpenRouter. Возвращает (текст ответа, название модели)."""
     try:
-        response = requests.post(config["url"], headers=headers, json=payload, timeout=90)
+        response = requests.post(url, headers=headers, json=payload, timeout=90)
     except requests.exceptions.Timeout:
         raise AiError("Нейросеть не ответила за 90 секунд. Попробуйте ещё раз.")
     except (requests.exceptions.RequestException, UnicodeError) as error:
@@ -572,16 +621,13 @@ def ask_model(user_prompt):
 
     try:
         data = response.json()
-        content = data["choices"][0]["message"]["content"]
-        model_name = data.get("model", config["model"])
-    except (ValueError, KeyError, IndexError, TypeError):
+        message = data["choices"][0]["message"]
+        content = message.get("content") or ""  # у «думающих» моделей тут может быть null
+        model_name = data.get("model", payload["model"])
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
         raise AiError("Ответ нейросети пришёл в неожиданном формате. Попробуйте ещё раз.")
 
-    post = clean_ai_text(content)
-    if not post:
-        raise AiError("Нейросеть вернула пустой ответ. Попробуйте ещё раз.")
-
-    return post, model_name
+    return content, model_name
 
 
 # ============================================================
