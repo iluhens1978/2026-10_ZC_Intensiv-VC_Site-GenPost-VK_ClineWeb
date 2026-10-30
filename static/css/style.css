@@ -1,0 +1,574 @@
+/* ============================================================
+   style.css — оформление сайта «ПостМастер»
+   Файл разбит на блоки, чтобы было легко находить нужное:
+   1. Переменные и базовые стили
+   2. Анимированный фон
+   3. Шапка сайта
+   4. Карточки и форма
+   5. Кнопки
+   6. Блок «Готовый пост»
+   7. Адаптивность (телефоны и планшеты)
+   ============================================================ */
+
+/* ---------- 1. Переменные и базовые стили ---------- */
+:root {
+  /* Цвета можно менять здесь — они применятся по всему сайту */
+  --bg: #0b0a14;
+  --surface: rgba(255, 255, 255, 0.045);
+  --surface-strong: rgba(255, 255, 255, 0.07);
+  --border: rgba(255, 255, 255, 0.09);
+  --text: #f3f1ff;
+  --muted: #a7a3c2;
+  --violet: #8b5cff;
+  --pink: #ff5d8f;
+  --cyan: #35d6ff;
+  --danger: #ff6b6b;
+  --radius: 22px;
+  --gradient: linear-gradient(120deg, var(--violet), var(--pink) 55%, var(--cyan));
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+code {
+  font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+  font-size: 0.9em;
+  padding: 2px 7px;
+  border-radius: 7px;
+  background: rgba(139, 92, 255, 0.18);
+  color: #d9ccff;
+}
+
+/* ---------- 2. Анимированный фон ---------- */
+.bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.bg__blob {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.55;
+  animation: drift 18s ease-in-out infinite alternate;
+}
+
+.bg__blob--one {
+  width: 42vw;
+  height: 42vw;
+  top: -10vw;
+  left: -8vw;
+  background: radial-gradient(circle, var(--violet), transparent 70%);
+}
+
+.bg__blob--two {
+  width: 38vw;
+  height: 38vw;
+  bottom: -12vw;
+  right: -6vw;
+  background: radial-gradient(circle, var(--pink), transparent 70%);
+  animation-delay: -6s;
+}
+
+.bg__blob--three {
+  width: 28vw;
+  height: 28vw;
+  top: 40%;
+  left: 45%;
+  background: radial-gradient(circle, var(--cyan), transparent 70%);
+  opacity: 0.28;
+  animation-delay: -12s;
+}
+
+@keyframes drift {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(4vw, 3vw, 0) scale(1.15); }
+}
+
+/* ---------- 3. Шапка сайта ---------- */
+.page {
+  position: relative;
+  z-index: 1;
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 56px 24px 48px;
+}
+
+.hero {
+  text-align: center;
+  margin-bottom: 36px;
+  animation: rise 0.7s ease both;
+}
+
+.hero__badge {
+  display: inline-block;
+  padding: 7px 16px;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.hero__title {
+  margin: 18px 0 10px;
+  font-size: clamp(38px, 6vw, 64px);
+  line-height: 1.05;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  background: var(--gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hero__lead {
+  margin: 0 auto;
+  max-width: 560px;
+  color: var(--muted);
+  font-size: clamp(15px, 1.6vw, 18px);
+}
+
+/* ---------- 4. Карточки и форма ---------- */
+.layout {
+  display: grid;
+  grid-template-columns: 1.02fr 1fr;
+  gap: 22px;
+  align-items: start;
+}
+
+.card {
+  padding: 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  /* Полупрозрачная «стеклянная» панель: сквозь неё видно цветной фон */
+  background: linear-gradient(180deg, rgba(26, 23, 44, 0.86), rgba(13, 12, 22, 0.9));
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  animation: rise 0.7s ease both;
+}
+
+.card--form { animation-delay: 0.08s; }
+.card--result { animation-delay: 0.16s; }
+
+.card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.card__title {
+  margin: 0 0 18px;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.card__meta {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.form {
+  display: grid;
+  gap: 18px;
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.field__label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.field__hint {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(167, 163, 194, 0.75);
+}
+
+/* Звёздочка у обязательного поля */
+.required {
+  color: var(--pink);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.input {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(10, 9, 18, 0.55);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.input::placeholder {
+  color: rgba(167, 163, 194, 0.55);
+}
+
+.input:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.input:focus {
+  outline: none;
+  border-color: rgba(139, 92, 255, 0.75);
+  background: rgba(16, 14, 28, 0.75);
+  box-shadow: 0 0 0 4px rgba(139, 92, 255, 0.18);
+}
+
+.input--area {
+  min-height: 132px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+/* Красная подсветка, если поле не заполнено */
+.input[aria-invalid="true"] {
+  border-color: rgba(255, 107, 107, 0.8);
+  box-shadow: 0 0 0 4px rgba(255, 107, 107, 0.14);
+}
+
+/* Настроение поста: чипы с эмодзи (внутри настоящие radio-кнопки) */
+.field--moods {
+  gap: 10px;
+}
+
+.moods {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mood {
+  position: relative;
+  cursor: pointer;
+}
+
+.mood__input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  cursor: pointer;
+}
+
+.mood__chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: rgba(10, 9, 18, 0.45);
+  font-size: 14px;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.mood:hover .mood__chip {
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.mood__input:checked + .mood__chip {
+  border-color: rgba(139, 92, 255, 0.9);
+  background: linear-gradient(120deg, rgba(139, 92, 255, 0.28), rgba(255, 93, 143, 0.2));
+  box-shadow: 0 0 0 3px rgba(139, 92, 255, 0.16);
+  font-weight: 600;
+}
+
+.mood__input:focus-visible + .mood__chip {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+/* Предупреждение о незаполненном описании */
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 107, 107, 0.45);
+  border-radius: 14px;
+  background: rgba(255, 107, 107, 0.12);
+  animation: shake 0.45s ease;
+}
+
+.alert__icon {
+  line-height: 1.4;
+}
+
+.alert__text {
+  margin: 0;
+  font-size: 14px;
+  color: #ffd7d7;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-4px); }
+  75%      { transform: translateX(4px); }
+}
+
+/* ---------- 5. Кнопки ---------- */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 15px 24px;
+  border: 0;
+  border-radius: 14px;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.25s ease, filter 0.2s ease;
+}
+
+/* Главная кнопка «Сформировать пост» — с градиентом и свечением */
+.button--primary {
+  width: 100%;
+  background: var(--gradient);
+  box-shadow: 0 14px 34px rgba(139, 92, 255, 0.35);
+}
+
+.button--primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 44px rgba(255, 93, 143, 0.45);
+  filter: saturate(1.15);
+}
+
+.button--primary:active {
+  transform: translateY(0);
+}
+
+.button__icon {
+  font-size: 18px;
+}
+
+/* Кнопка «Скопировать пост» — спокойная, с рамкой */
+.button--copy {
+  border: 1px solid rgba(139, 92, 255, 0.55);
+  background: rgba(139, 92, 255, 0.14);
+  font-size: 15px;
+  padding: 12px 20px;
+}
+
+.button--copy:hover {
+  background: rgba(139, 92, 255, 0.26);
+  transform: translateY(-1px);
+}
+
+.button--copy.is-done {
+  border-color: rgba(53, 214, 255, 0.7);
+  background: rgba(53, 214, 255, 0.18);
+}
+
+/* Текстовая кнопка «Заполнить примером» */
+.link-button {
+  justify-self: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 14px;
+  text-decoration: underline;
+  text-decoration-color: rgba(167, 163, 194, 0.4);
+  text-underline-offset: 4px;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.link-button:hover {
+  color: var(--text);
+}
+
+/* ---------- 6. Блок «Готовый пост» ---------- */
+.post {
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(8, 7, 15, 0.6);
+  font-size: 15px;
+  line-height: 1.7;
+  white-space: pre-wrap;   /* сохраняет переносы строк из поста */
+  word-break: break-word;
+  min-height: 148px;
+  animation: fadeIn 0.45s ease both;
+}
+
+.post--empty {
+  display: grid;
+  place-items: center;
+  border-style: dashed;
+  color: rgba(167, 163, 194, 0.7);
+  text-align: center;
+}
+
+.post--empty p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.result__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+/* Сообщение «Пост скопирован» — скрыто, пока кнопку не нажали */
+.copy-status {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cyan);
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.copy-status.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Плашка с настройками из voice.md */
+.voice {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.voice__title {
+  margin: 0 0 10px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(167, 163, 194, 0.8);
+}
+
+.voice__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.voice__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 12.5px;
+}
+
+.voice__label {
+  color: rgba(167, 163, 194, 0.85);
+}
+
+.voice__value {
+  font-weight: 600;
+}
+
+.footer {
+  margin-top: 30px;
+  text-align: center;
+  font-size: 13.5px;
+  color: rgba(167, 163, 194, 0.8);
+}
+
+/* ---------- 7. Адаптивность ---------- */
+@media (max-width: 980px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .page {
+    padding: 40px 18px 36px;
+  }
+}
+
+@media (max-width: 520px) {
+  .card {
+    padding: 20px;
+  }
+
+  .moods {
+    grid-template-columns: 1fr;
+  }
+
+  .button--primary,
+  .button--copy {
+    width: 100%;
+  }
+}
+
+/* ---------- Общие анимации ---------- */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Уважаем настройку «уменьшить анимации» в системе */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
