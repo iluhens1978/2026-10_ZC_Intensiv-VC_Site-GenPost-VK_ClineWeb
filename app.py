@@ -55,23 +55,33 @@ def load_secrets():
     return secrets
 
 
-# Все секреты и настройки читаются один раз при запуске сайта
-SECRETS = load_secrets()
+# Значения по умолчанию, если в .env чего-то не хватает
+DEFAULT_MODEL = "openrouter/free"
+DEFAULT_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-OPENROUTER_API_KEY = SECRETS.get("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = SECRETS.get("OPENROUTER_MODEL") or "openrouter/free"
-OPENROUTER_URL = (
-    SECRETS.get("OPENROUTER_BASE_URL")
-    or "https://openrouter.ai/api/v1/chat/completions"
-)
-APP_URL = SECRETS.get("APP_URL") or "http://127.0.0.1:5000"
-APP_TITLE = SECRETS.get("APP_TITLE") or "PostMaster AI"
+
+def openrouter_config():
+    """Возвращает настройки OpenRouter из файла .env.
+
+    Файл читается при каждом запросе, поэтому после вставки ключа
+    сайт не нужно перезапускать — достаточно обновить страницу.
+    """
+    secrets = load_secrets()
+
+    return {
+        "key": secrets.get("OPENROUTER_API_KEY", ""),
+        "model": secrets.get("OPENROUTER_MODEL") or DEFAULT_MODEL,
+        "url": secrets.get("OPENROUTER_BASE_URL") or DEFAULT_API_URL,
+        "app_url": secrets.get("APP_URL") or "http://127.0.0.1:5000",
+        "app_title": secrets.get("APP_TITLE") or "PostMaster AI",
+    }
 
 
 def ascii_header(value, fallback="PostMaster AI"):
     """HTTP-заголовки могут содержать только латиницу — лишние символы убираем."""
     text = str(value).encode("ascii", "ignore").decode("ascii").strip()
     return text or fallback
+
 
 # Заголовки «как у браузера»: некоторые магазины не отдают страницу роботам
 BROWSER_HEADERS = {
@@ -515,14 +525,16 @@ def clean_ai_text(text):
 
 def ask_model(user_prompt):
     """Отправляет запрос в OpenRouter. Возвращает (текст поста, название модели)."""
-    if not OPENROUTER_API_KEY:
+    config = openrouter_config()
+
+    if not config["key"]:
         raise AiError(
             "Не найден ключ OpenRouter. Откройте файл .env в папке проекта, "
-            "вставьте ключ в строку OPENROUTER_API_KEY=... и перезапустите сайт."
+            "вставьте ключ в строку OPENROUTER_API_KEY=... и обновите страницу."
         )
 
     payload = {
-        "model": OPENROUTER_MODEL,
+        "model": config["model"],
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
@@ -532,14 +544,14 @@ def ask_model(user_prompt):
     }
 
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {config['key']}",
         "Content-Type": "application/json",
-        "HTTP-Referer": ascii_header(APP_URL, "http://127.0.0.1:5000"),
-        "X-Title": ascii_header(APP_TITLE),  # необязательно, название приложения
+        "HTTP-Referer": ascii_header(config["app_url"], "http://127.0.0.1:5000"),
+        "X-Title": ascii_header(config["app_title"]),  # необязательно, название приложения
     }
 
     try:
-        response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=90)
+        response = requests.post(config["url"], headers=headers, json=payload, timeout=90)
     except requests.exceptions.Timeout:
         raise AiError("Нейросеть не ответила за 90 секунд. Попробуйте ещё раз.")
     except (requests.exceptions.RequestException, UnicodeError) as error:
@@ -561,7 +573,7 @@ def ask_model(user_prompt):
     try:
         data = response.json()
         content = data["choices"][0]["message"]["content"]
-        model_name = data.get("model", OPENROUTER_MODEL)
+        model_name = data.get("model", config["model"])
     except (ValueError, KeyError, IndexError, TypeError):
         raise AiError("Ответ нейросети пришёл в неожиданном формате. Попробуйте ещё раз.")
 
@@ -637,6 +649,7 @@ def index():
                 error_text = str(ai_error)
 
     settings = voice_settings(form["mood"])
+    config = openrouter_config()
 
     return render_template(
         "index.html",
@@ -649,11 +662,18 @@ def index():
         model_name=model_name,
         angle=angle,
         voice_view=settings_for_screen(settings),
-        ai_model=OPENROUTER_MODEL,
-        has_key=bool(OPENROUTER_API_KEY),
+        ai_model=config["model"],
+        has_key=bool(config["key"]),
     )
 
 
 # Запуск сервера: python app.py → http://127.0.0.1:5000
 if __name__ == "__main__":
+    if not openrouter_config()["key"]:
+        print("=" * 60)
+        print("⚠️  Ключ OpenRouter не найден.")
+        print("   Откройте файл .env и вставьте ключ в строку OPENROUTER_API_KEY=")
+        print("   Ключ можно создать здесь: https://openrouter.ai/keys")
+        print("=" * 60)
+
     app.run(debug=True)
