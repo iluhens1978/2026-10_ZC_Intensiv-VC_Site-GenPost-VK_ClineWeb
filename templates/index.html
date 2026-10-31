@@ -62,6 +62,7 @@
 
         <!-- novalidate: проверку делает Flask, чтобы предупреждение было нашим -->
         <form class="form" method="post" action="{{ url_for('index') }}" novalidate data-form>
+          <input type="hidden" name="action" value="generate">
 
           <!-- Ссылка на товар (обязательная) -->
           <div class="field">
@@ -144,6 +145,21 @@
           {% endif %}
         </div>
 
+        <!-- Сообщение об успехе: избранное или публикация в ВК -->
+        {% if message %}
+        <div class="notice notice--{{ message_type or 'success' }}" role="status">
+          <span class="notice__icon" aria-hidden="true">{% if message_type == 'info' %}ℹ️{% else %}✅{% endif %}</span>
+          <p class="notice__text">
+            {{ message }}
+            {% if message_link %}
+            <a class="notice__link" href="{{ message_link }}" target="_blank" rel="noopener">
+              Открыть пост во ВКонтакте
+            </a>
+            {% endif %}
+          </p>
+        </div>
+        {% endif %}
+
         {% if product %}
         <!-- Что удалось прочитать со страницы товара -->
         <article class="product">
@@ -168,19 +184,96 @@
         {% endif %}
 
         {% if post %}
-        <article class="post" id="post-text">{{ post }}</article>
+        <!-- Сам текст поста + копирование -->
+        <div class="copyable">
+          <article class="post" id="post-text">{{ post }}</article>
 
-        <div class="result__actions">
-          <button class="button button--copy" type="button" data-copy>
-            <span class="button__icon" aria-hidden="true">📋</span>
-            Скопировать пост
-          </button>
-          <!-- Сюда JavaScript выводит сообщение «Пост скопирован» -->
-          <span class="copy-status" id="copy-status" role="status" aria-live="polite"></span>
+          <div class="result__actions">
+            <button class="button button--copy" type="button" data-copy>
+              <span class="button__icon" aria-hidden="true">📋</span>
+              Скопировать пост
+            </button>
+            <span class="copy-status" data-copy-status role="status" aria-live="polite"></span>
+          </div>
+        </div>
+
+        <!-- ============ ПУБЛИКАЦИЯ: сейчас или в выбранное время ============ -->
+        <div class="publish">
+          <p class="publish__title">Публикация в сообществе ВКонтакте</p>
+
+          {% if not vk_ready %}
+          <p class="publish__hint">
+            ВКонтакте не подключён: впишите <code>VK_ACCESS_TOKEN</code> и
+            <code>VK_GROUP_ID</code> в файл <code>.env</code> и обновите страницу.
+          </p>
+          {% endif %}
+
+          <div class="publish__row">
+            <!-- Опубликовать сразу -->
+            <form method="post" action="{{ url_for('index') }}">
+              <input type="hidden" name="action" value="publish_now">
+              <input type="hidden" name="post" value="{{ post }}">
+              <input type="hidden" name="url" value="{{ form.url }}">
+              <input type="hidden" name="note" value="{{ form.note }}">
+              <input type="hidden" name="mood" value="{{ form.mood }}">
+              <input type="hidden" name="product_name" value="{{ product_name }}">
+              <button class="button button--publish" type="submit" {% if not vk_ready %}disabled{% endif %}>
+                <span class="button__icon" aria-hidden="true">📤</span>
+                Опубликовать сейчас
+              </button>
+            </form>
+
+            <!-- Сохранить в избранное -->
+            <form method="post" action="{{ url_for('index') }}">
+              <input type="hidden" name="action" value="favorite">
+              <input type="hidden" name="post" value="{{ post }}">
+              <input type="hidden" name="url" value="{{ form.url }}">
+              <input type="hidden" name="note" value="{{ form.note }}">
+              <input type="hidden" name="mood" value="{{ form.mood }}">
+              <input type="hidden" name="product_name" value="{{ product_name }}">
+              <button class="button button--ghost" type="submit">
+                <span class="button__icon" aria-hidden="true">⭐</span>
+                В избранное
+              </button>
+            </form>
+          </div>
+
+          <!-- Отложенная публикация: пользователь выбирает время сам -->
+          <form class="schedule" method="post" action="{{ url_for('index') }}">
+            <input type="hidden" name="action" value="publish_later">
+            <input type="hidden" name="post" value="{{ post }}">
+            <input type="hidden" name="url" value="{{ form.url }}">
+            <input type="hidden" name="note" value="{{ form.note }}">
+            <input type="hidden" name="mood" value="{{ form.mood }}">
+            <input type="hidden" name="product_name" value="{{ product_name }}">
+
+            <label class="schedule__label" for="publish_at">
+              Или отложите публикацию на конкретное время
+            </label>
+            <div class="schedule__row">
+              <input
+                class="input input--datetime"
+                type="datetime-local"
+                id="publish_at"
+                name="publish_at"
+                min="{{ min_schedule }}"
+                required
+                {% if not vk_ready %}disabled{% endif %}>
+              <button class="button button--ghost" type="submit" {% if not vk_ready %}disabled{% endif %}>
+                <span class="button__icon" aria-hidden="true">🕒</span>
+                Отложить
+              </button>
+            </div>
+            <p class="schedule__hint">
+              Пост появится в сообществе автоматически в выбранное время.
+              Время берётся по часам этого компьютера.
+            </p>
+          </form>
         </div>
 
         <!-- Ещё один вариант: тот же товар, но другой творческий приём -->
         <form class="result__again" method="post" action="{{ url_for('index') }}" data-form>
+          <input type="hidden" name="action" value="generate">
           <input type="hidden" name="url" value="{{ form.url }}">
           <input type="hidden" name="note" value="{{ form.note }}">
           <input type="hidden" name="mood" value="{{ form.mood }}">
@@ -190,8 +283,9 @@
         </form>
 
         <p class="result__meta">
-          Модель: <code>{{ model_name }}</code>
+          {% if model_name %}Модель: <code>{{ model_name }}</code>{% endif %}
           {% if angle %} · приём: {{ angle }}{% endif %}
+          {% if product_url %} · <a href="{{ product_url }}" target="_blank" rel="noopener">ссылка на товар</a>{% endif %}
         </p>
         {% else %}
         <div class="post post--empty">
@@ -217,6 +311,67 @@
       </section>
 
     </main>
+
+    <!-- ============ ИЗБРАННОЕ ============ -->
+    <section class="card card--favorites" id="favorites">
+      <div class="card__head">
+        <h2 class="card__title">Избранное</h2>
+        <span class="card__meta">
+          {% if favorites %}{{ favorites|length }} {{ favorites_word }}{% endif %}
+        </span>
+      </div>
+
+      {% if favorites %}
+      <ul class="favorites">
+        {% for item in favorites %}
+        <li class="favorite">
+          <details class="favorite__details">
+            <summary class="favorite__summary">
+              <span class="favorite__title">{{ item.title or 'Пост' }}</span>
+              <span class="favorite__date">{{ item.created }}</span>
+            </summary>
+
+            <div class="copyable">
+              <div class="post post--small">{{ item.text }}</div>
+              <div class="result__actions">
+                <button class="button button--copy button--small" type="button" data-copy>
+                  <span class="button__icon" aria-hidden="true">📋</span>
+                  Скопировать
+                </button>
+                <span class="copy-status" data-copy-status role="status" aria-live="polite"></span>
+              </div>
+            </div>
+          </details>
+
+          <div class="favorite__actions">
+            <form method="post" action="{{ url_for('index') }}">
+              <input type="hidden" name="action" value="publish_now">
+              <input type="hidden" name="post" value="{{ item.text }}">
+              <input type="hidden" name="url" value="{{ item.url }}">
+              <input type="hidden" name="product_name" value="{{ item.title }}">
+              <input type="hidden" name="mood" value="{{ form.mood }}">
+              <button class="button button--ghost button--small" type="submit" {% if not vk_ready %}disabled{% endif %}>
+                📤 Опубликовать
+              </button>
+            </form>
+
+            <form method="post" action="{{ url_for('favorites_delete') }}">
+              <input type="hidden" name="favorite_id" value="{{ item.id }}">
+              <button class="button button--danger button--small" type="submit">
+                Удалить
+              </button>
+            </form>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="favorites__empty">
+        Здесь пока пусто. Сгенерируйте пост и нажмите «⭐ В избранное» —
+        он сохранится в файле <code>data/favorites.json</code>.
+      </p>
+      {% endif %}
+    </section>
 
     <footer class="footer">
       <p>

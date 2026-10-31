@@ -1,30 +1,34 @@
 /* ============================================================
-   app.js — небольшие улучшения страницы.
-   Здесь всего две функции:
-   1. копирование готового поста в буфер обмена;
-   2. состояние загрузки, пока нейросеть пишет текст.
+   app.js — небольшие улучшения страницы:
+   1. копирование поста (в «Готовом посте» и в «Избранном»);
+   2. состояние загрузки, пока нейросеть пишет текст;
+   3. удобный минимум для поля с датой публикации.
    ============================================================ */
 
 // ---------- 1. Копирование поста ----------
-const copyButton = document.querySelector("[data-copy]");
-const postElement = document.getElementById("post-text");
-const copyStatus = document.getElementById("copy-status");
+// Кнопок копирования на странице может быть несколько, поэтому
+// каждая ищет свой текст в ближайшем блоке .copyable
+const copyButtons = document.querySelectorAll("[data-copy]");
 
-if (copyButton && postElement) {
-  copyButton.addEventListener("click", async () => {
+copyButtons.forEach((button) => {
+  button.addEventListener("click", async () => {
+    const block = button.closest(".copyable");
+    const postElement = block ? block.querySelector(".post") : null;
+    const status = block ? block.querySelector("[data-copy-status]") : null;
+
+    if (!postElement) return;
+
     const postText = postElement.textContent; // текст поста как есть, с переносами
 
     try {
-      // Современный способ копирования
-      await navigator.clipboard.writeText(postText);
+      await navigator.clipboard.writeText(postText); // современный способ
     } catch (error) {
-      // Запасной способ — если браузер не разрешил доступ к буферу обмена
-      copyWithFallback(postText);
+      copyWithFallback(postText); // запасной способ
     }
 
-    showCopied();
+    showCopied(button, status);
   });
-}
+});
 
 // Запасной способ: создаём невидимое поле, выделяем текст и копируем
 function copyWithFallback(text) {
@@ -40,17 +44,17 @@ function copyWithFallback(text) {
 }
 
 // Показываем сообщение «Пост скопирован» на 2,5 секунды
-function showCopied() {
-  if (!copyStatus) return;
+function showCopied(button, status) {
+  if (!status) return;
 
-  copyStatus.textContent = "Пост скопирован";
-  copyStatus.classList.add("is-visible");
-  document.querySelector("[data-copy]").classList.add("is-done");
+  status.textContent = "Пост скопирован";
+  status.classList.add("is-visible");
+  button.classList.add("is-done");
 
   clearTimeout(showCopied.timer);
   showCopied.timer = setTimeout(() => {
-    copyStatus.classList.remove("is-visible");
-    document.querySelector("[data-copy]").classList.remove("is-done");
+    status.classList.remove("is-visible");
+    button.classList.remove("is-done");
   }, 2500);
 }
 
@@ -78,3 +82,22 @@ forms.forEach((form) => {
     }, 100000);
   });
 });
+
+// ---------- 3. Поле «дата и время» для отложенного поста ----------
+const scheduleInput = document.querySelector(".input--datetime");
+
+if (scheduleInput) {
+  // Подставляем ближайшее удобное время (через час), чтобы не вводить вручную
+  scheduleInput.addEventListener("focus", () => {
+    if (scheduleInput.value) return;
+
+    const soon = new Date(Date.now() + 60 * 60 * 1000);
+    const pad = (number) => String(number).padStart(2, "0");
+    scheduleInput.value =
+      soon.getFullYear() +
+      "-" + pad(soon.getMonth() + 1) +
+      "-" + pad(soon.getDate()) +
+      "T" + pad(soon.getHours()) +
+      ":" + pad(soon.getMinutes());
+  });
+}

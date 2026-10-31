@@ -18,17 +18,21 @@ import html as html_module
 import json
 import random
 import re
+import time
+import uuid
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
-from flask import Flask, render_template, request
+from flask import Flask, redirect, render_template, request, url_for
 
 app = Flask(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 VOICE_FILE = BASE_DIR / "voice.md"
 SECRETS_FILE = BASE_DIR / ".env"
+FAVORITES_FILE = BASE_DIR / "data" / "favorites.json"  # «база» избранного — обычный JSON
 
 
 # ============================================================
@@ -74,6 +78,16 @@ def openrouter_config():
         "url": secrets.get("OPENROUTER_BASE_URL") or DEFAULT_API_URL,
         "app_url": secrets.get("APP_URL") or "http://127.0.0.1:5000",
         "app_title": secrets.get("APP_TITLE") or "PostMaster AI",
+    }
+
+
+def vk_config():
+    """Возвращает настройки ВКонтакте из файла .env."""
+    secrets = load_secrets()
+
+    return {
+        "token": secrets.get("VK_ACCESS_TOKEN", ""),
+        "group_id": re.sub(r"\D", "", secrets.get("VK_GROUP_ID", "")),  # только цифры
     }
 
 
@@ -631,8 +645,179 @@ def _send_request(url, headers, payload):
 
 
 # ============================================================
-# 5. МАРШРУТ САЙТА
+# 5. ПУБЛИКАЦИЯ В СООБЩЕСТВЕ ВКОНТАКТЕ
 # ============================================================
+
+VK_API_URL = "https://api.vk.com/method/wall.post"
+VK_API_VERSION = "5.199"  # версия API ВКонтакте
+
+# Минимальный запас времени для отложенного поста (в секундах)
+MIN_SCHEDULE_DELAY = 120
+
+# Понятные пояснения к ошибкам ВКонтакте
+VK_ERRORS = {
+    5: "ВКонтакте не принял токен (ошибка 5). Проверьте VK_ACCESS_TOKEN в файле .env.",
+    6: "Слишком много запросов к ВКонтакте. Подождите минуту.",
+    9: "Слишком много одинаковых запросов. Подождите немного и повторите.",
+    15: (
+        "Нет прав на публикацию (ошибка 15). Включите у ключа права «Доступ к стене» "
+        "и «Управление сообществом»."
+    ),
+    100: "Неверные параметры запроса (ошибка 100). Проверьте VK_GROUP_ID — нужны только цифры.",
+    214: "Публикация на стене сообщества запрещена (ошибка 214). Проверьте настройки стены.",
+    150: "Стена сообщества закрыта (ошибка 150). Разрешите публикацию в настройках сообщества.",
+}
+
+
+class VkError(Exception):
+    """Ошибка публикации — с понятным текстом для пользователя."""
+
+
+def publish_to_vk(text, publish_at=None):
+    """Публикует пост на стене сообщества.
+
+    text       — текст поста;
+    publish_at — время публикации (unix-время). Если не указано — пост выходит сразу.
+
+    Возвращает (post_id, ссылка_на_пост).
+    """
+    config = vk_config()
+
+    if not config["token"] or not config["group_id"]:
+        raise VkError(
+            "ВКонтакте не подключён. Добавьте VK_ACCESS_TOKEN и VK_GROUP_ID в файл .env "
+            "и обновите страницу."
+        )
+
+    params = {
+        "owner_id": f"-{config['group_id']}",  # минус = публикация от имени сообщества
+        "from_group": 1,
+        "message": text,
+        "access_token": config["token"],
+        "v": VK_API_VERSION,
+    }
+    if publish_at:
+        params["publish_date"] = publish_at  # ВКонтакте сам опубликует пост в это время
+
+    try:
+        response = requests.post(VK_API_URL, data=params, timeout=30)
+    except requests.exceptions.Timeout:
+        raise VkError("ВКонтакте не ответил за 30 секунд. Попробуйте ещё раз.")
+    except requests.exceptions.RequestException as error:
+        raise VkError(f"Не удалось связаться с ВКонтакте: {error}")
+
+    try:
+        data = response.json()
+    except ValueError:
+        raise VkError("ВКонтакте вернул непонятный ответ. Попробуйте ещё раз.")
+
+    if "error" in data:
+        code = data["error"].get("error_code")
+        text_error = data["error"].get("error_msg", "")
+        raise VkError(VK_ERRORS.get(code, f"ВКонтакте вернул ошибку {code}: {text_error}"))
+
+    post_id = data.get("response", {}).get("post_id")
+    if not post_id:
+        raise VkError("ВКонтакте не вернул номер поста. Попробуйте ещё раз.")
+
+    link = f"https://vk.com/wall-{config['group_id']}_{post_id}"
+    return post_id, link
+
+
+def parse_publish_time(value):
+    """Превращает значение поля «дата и время» в отметку времени (unix).
+
+    Возвращает (timestamp, datetime) или бросает VkError с подсказкой.
+    """
+    try:
+        moment = datetime.strptime((value or "").strip(), "%Y-%m-%dT%H:%M")
+    except ValueError:
+        raise VkError("Не получилось прочитать дату и время. Выберите время в календаре заново.")
+
+    timestamp = int(moment.timestamp())
+    if timestamp < time.time() + MIN_SCHEDULE_DELAY:
+        raise VkError(
+            "Время публикации должно быть хотя бы на 2 минуты позже текущего. "
+            "Выберите время ещё раз."
+        )
+
+    return timestamp, moment
+
+
+def plural(count, one, few, many):
+    """Русское склонение: 1 пост, 2 поста, 5 постов."""
+    if count % 10 == 1 and count % 100 != 11:
+        return one
+    if count % 10 in (2, 3, 4) and count % 100 not in (12, 13, 14):
+        return few
+    return many
+
+
+def min_schedule_value():
+    """Самая ранняя дата для календаря (через 2 минуты) в формате поля datetime-local."""
+    earliest = datetime.fromtimestamp(time.time() + MIN_SCHEDULE_DELAY)
+    return earliest.strftime("%Y-%m-%dT%H:%M")
+
+
+# ============================================================
+# 6. ИЗБРАННОЕ (хранится в JSON-файле, без базы данных)
+# ============================================================
+
+def load_favorites():
+    """Читает список сохранённых постов из data/favorites.json."""
+    if not FAVORITES_FILE.exists():
+        return []
+
+    try:
+        data = json.loads(FAVORITES_FILE.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return []
+
+    return data if isinstance(data, list) else []
+
+
+def save_favorites(items):
+    """Записывает список избранного в файл (папку создаём при необходимости)."""
+    FAVORITES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    FAVORITES_FILE.write_text(
+        json.dumps(items, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def add_favorite(text, title="", url="", mood=""):
+    """Добавляет пост в избранное. Возвращает True, если пост действительно новый."""
+    text = (text or "").strip()
+    if not text:
+        return False
+
+    items = load_favorites()
+    if any(item.get("text") == text for item in items):  # такой пост уже есть
+        return False
+
+    items.insert(
+        0,
+        {
+            "id": uuid.uuid4().hex[:8],
+            "text": text,
+            "title": (title or "Пост из ПостМастера")[:120],
+            "url": url,
+            "mood": mood,
+            "created": datetime.now().strftime("%d.%m.%Y %H:%M"),
+        },
+    )
+    save_favorites(items)
+    return True
+
+
+def delete_favorite(favorite_id):
+    """Удаляет пост из избранного по его id."""
+    items = load_favorites()
+    remaining = [item for item in items if item.get("id") != favorite_id]
+    save_favorites(remaining)
+    return len(remaining) != len(items)
+
+
 
 def settings_for_screen(settings):
     """Короткая подпись настроек для панели «Голос поста (из voice.md)»."""
@@ -650,18 +835,33 @@ def settings_for_screen(settings):
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    """Главная страница: ссылка на товар → пост от нейросети."""
+    """Главная страница: генерация поста, публикация в ВК и избранное.
+
+    Одна страница обрабатывает четыре действия (поле формы action):
+      generate       — сгенерировать пост по ссылке (нейросеть);
+      favorite       — сохранить готовый пост в избранное;
+      publish_now    — опубликовать пост в сообществе прямо сейчас;
+      publish_later  — отложить публикацию на выбранное время.
+    """
     moods = mood_options()
     form = {"url": "", "note": "", "mood": moods[0]["name"]}
 
     post = ""
-    warning = ""    # подсказка про пустую или неправильную ссылку
-    error_text = ""  # ошибка нейросети
+    warning = ""       # подсказка про пустую или неправильную ссылку
+    error_text = ""    # ошибка нейросети или ВКонтакте
+    message = ""       # сообщение об успехе (избранное / публикация)
+    message_link = ""  # ссылка на опубликованный пост в ВК
+    message_type = ""
     product = None
+    product_name = ""
+    product_url = ""
     model_name = ""
     angle = ""
 
     if request.method == "POST":
+        action = request.form.get("action", "generate")
+
+        # Общие поля формы (они есть в каждом действии)
         form["url"] = request.form.get("url", "").strip()
         form["note"] = request.form.get("note", "").strip()[:300]
 
@@ -669,33 +869,76 @@ def index():
         known = [mood["name"] for mood in moods]
         form["mood"] = chosen if chosen in known else moods[0]["name"]
 
-        url = normalize_url(form["url"])
+        product_name = request.form.get("product_name", "").strip()[:200]
+        product_url = normalize_url(form["url"]) if form["url"] else ""
 
-        if not form["url"]:
-            warning = "Вставьте ссылку на товар — без неё нейросети нечего обрабатывать."
-        elif not is_valid_url(url):
-            warning = (
-                "Это не похоже на ссылку. Пример: "
-                "https://www.ozon.ru/product/keramicheskaya-kruzhka-123456/"
-            )
+        if action in ("favorite", "publish_now", "publish_later"):
+            # Эти действия работают с уже готовым текстом поста
+            post = request.form.get("post", "").strip()
+
+            if not post:
+                error_text = "Текст поста потерялся. Сформируйте пост заново."
+            elif action == "favorite":
+                if add_favorite(post, product_name, product_url, form["mood"]):
+                    message = "Пост сохранён в избранное."
+                    message_type = "success"
+                else:
+                    message = "Такой пост уже есть в избранном."
+                    message_type = "info"
+            elif action == "publish_now":
+                try:
+                    _, link = publish_to_vk(post)
+                    message = "Пост опубликован в сообществе ВКонтакте."
+                    message_link = link
+                    message_type = "success"
+                except VkError as vk_error:
+                    error_text = str(vk_error)
+            else:  # publish_later
+                try:
+                    timestamp, moment = parse_publish_time(
+                        request.form.get("publish_at", "")
+                    )
+                    _, link = publish_to_vk(post, publish_at=timestamp)
+                    message = (
+                        "Пост отложен: он появится в сообществе "
+                        f"{moment.strftime('%d.%m.%Y в %H:%M')}."
+                    )
+                    message_link = link
+                    message_type = "success"
+                except VkError as vk_error:
+                    error_text = str(vk_error)
         else:
-            settings = voice_settings(form["mood"])
-            angle = random.choice(CREATIVE_ANGLES)  # каждый пост получается другим
+            # action == "generate" — обычная генерация поста по ссылке
+            url = normalize_url(form["url"])
 
-            # 1. Достаём данные товара со страницы
-            product = load_product(url)
+            if not form["url"]:
+                warning = "Вставьте ссылку на товар — без неё нейросети нечего обрабатывать."
+            elif not is_valid_url(url):
+                warning = (
+                    "Это не похоже на ссылку. Пример: "
+                    "https://www.ozon.ru/product/keramicheskaya-kruzhka-123456/"
+                )
+            else:
+                settings = voice_settings(form["mood"])
+                angle = random.choice(CREATIVE_ANGLES)  # каждый пост получается другим
 
-            # 2. Просим нейросеть написать пост
-            prompt = build_user_prompt(
-                product, url, form["note"], form["mood"], angle, settings
-            )
-            try:
-                post, model_name = ask_model(prompt)
-            except AiError as ai_error:
-                error_text = str(ai_error)
+                # 1. Достаём данные товара со страницы
+                product = load_product(url)
+
+                # 2. Просим нейросеть написать пост
+                prompt = build_user_prompt(
+                    product, url, form["note"], form["mood"], angle, settings
+                )
+                try:
+                    post, model_name = ask_model(prompt)
+                    product_name = product["name"]
+                    product_url = url
+                except AiError as ai_error:
+                    error_text = str(ai_error)
 
     settings = voice_settings(form["mood"])
     config = openrouter_config()
+    vk = vk_config()
 
     return render_template(
         "index.html",
@@ -704,13 +947,29 @@ def index():
         post=post,
         warning=warning,
         error_text=error_text,
+        message=message,
+        message_link=message_link,
+        message_type=message_type,
         product=product,
+        product_name=product_name,
+        product_url=product_url,
         model_name=model_name,
         angle=angle,
         voice_view=settings_for_screen(settings),
         ai_model=config["model"],
         has_key=bool(config["key"]),
+        vk_ready=bool(vk["token"] and vk["group_id"]),
+        min_schedule=min_schedule_value(),
+        favorites=load_favorites(),
+        favorites_word=plural(len(load_favorites()), "пост", "поста", "постов"),
     )
+
+
+@app.route("/favorites/delete", methods=["POST"])
+def favorites_delete():
+    """Удаляет пост из избранного и возвращает на главную страницу."""
+    delete_favorite(request.form.get("favorite_id", ""))
+    return redirect(url_for("index"))
 
 
 # Запуск сервера: python app.py → http://127.0.0.1:5000
