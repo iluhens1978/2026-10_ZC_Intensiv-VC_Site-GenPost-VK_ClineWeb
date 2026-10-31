@@ -184,9 +184,51 @@
         {% endif %}
 
         {% if post %}
-        <!-- Сам текст поста + копирование -->
+        <!-- Сам текст поста + карандаш и копирование -->
         <div class="copyable">
-          <article class="post" id="post-text">{{ post }}</article>
+          <div class="post__head">
+            <article class="post" id="post-text">{{ post }}</article>
+
+            <!-- ✏️ Карандаш: раскрывает редактор под постом -->
+            <details class="editor">
+              <summary class="editor__toggle" title="Редактировать пост">
+                <span class="editor__pencil" aria-hidden="true">✏️</span>
+                <span class="editor__text">Редактировать</span>
+              </summary>
+
+              <form class="editor__form" method="post" action="{{ url_for('index') }}">
+                <input type="hidden" name="action" value="save_edit">
+                <input type="hidden" name="url" value="{{ form.url }}">
+                <input type="hidden" name="note" value="{{ form.note }}">
+                <input type="hidden" name="mood" value="{{ form.mood }}">
+                <input type="hidden" name="product_name" value="{{ product_name }}">
+
+                <label class="field__label" for="edit-post">Текст поста</label>
+                <textarea
+                  class="input input--area input--edit"
+                  id="edit-post"
+                  name="post"
+                  rows="9"
+                  maxlength="4000"
+                  data-edit-textarea
+                  required>{{ post }}</textarea>
+
+                <div class="editor__footer">
+                  <span class="editor__counter" data-edit-counter>
+                    {{ post|length }} символов
+                  </span>
+                  <button class="button button--save" type="submit">
+                    <span class="button__icon" aria-hidden="true">💾</span>
+                    Сохранить изменения
+                  </button>
+                </div>
+                <p class="editor__hint">
+                  После сохранения пост в блоке «Готовый пост» обновится,
+                  и его можно будет опубликовать или отложить.
+                </p>
+              </form>
+            </details>
+          </div>
 
           <div class="result__actions">
             <button class="button button--copy" type="button" data-copy>

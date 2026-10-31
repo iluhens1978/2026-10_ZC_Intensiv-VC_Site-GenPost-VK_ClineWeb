@@ -569,6 +569,18 @@ def clean_ai_text(text):
 MAX_ATTEMPTS = 3
 
 
+def clean_edited_text(text):
+    """Аккуратно причёсывает текст, который пользователь правил вручную.
+
+    Здесь минимум вмешательства: убираем лишние пробелы в конце строк
+    и лишние пустые строки, чтобы пост выглядел опрятно в ленте.
+    """
+    text = (text or "").replace("\r\n", "\n").strip()
+    text = "\n".join(line.rstrip() for line in text.splitlines())
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def ask_model(user_prompt):
     """Отправляет запрос в OpenRouter. Возвращает (текст поста, название модели)."""
     config = openrouter_config()
@@ -872,7 +884,16 @@ def index():
         product_name = request.form.get("product_name", "").strip()[:200]
         product_url = normalize_url(form["url"]) if form["url"] else ""
 
-        if action in ("favorite", "publish_now", "publish_later"):
+        if action == "save_edit":
+            # Пользователь отредактировал пост вручную и нажал «Сохранить»
+            post = clean_edited_text(request.form.get("post", ""))
+
+            if not post:
+                error_text = "Пост не может быть пустым. Напишите текст и сохраните ещё раз."
+            else:
+                message = "Изменения сохранены. Теперь пост можно опубликовать или отложить."
+                message_type = "success"
+        elif action in ("favorite", "publish_now", "publish_later"):
             # Эти действия работают с уже готовым текстом поста
             post = request.form.get("post", "").strip()
 

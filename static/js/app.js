@@ -101,3 +101,41 @@ if (scheduleInput) {
       ":" + pad(soon.getMinutes());
   });
 }
+
+// ---------- 4. Редактор поста (иконка-карандаш) ----------
+const editDetails = document.querySelector(".editor");
+const editTextarea = document.querySelector("[data-edit-textarea]");
+const editCounter = document.querySelector("[data-edit-counter]");
+
+// Живой счётчик символов под полем редактирования.
+// Считаем по «видимым» символам ([...text]), чтобы эмодзи считались за один —
+// так же, как считает сервер (post|length).
+if (editTextarea && editCounter) {
+  const updateCounter = () => {
+    editCounter.textContent = [...editTextarea.value].length + " символов";
+  };
+
+  editTextarea.addEventListener("input", updateCounter);
+  updateCounter();
+}
+
+// Поле редактора растягивается по тексту (до разумного предела)
+if (editTextarea) {
+  const autoResize = () => {
+    editTextarea.style.height = "auto";
+    editTextarea.style.height = Math.min(editTextarea.scrollHeight + 2, 620) + "px";
+  };
+
+  autoResize();
+  editTextarea.addEventListener("input", autoResize);
+}
+
+// Когда карандаш открыли — сразу ставим курсор в текст
+if (editDetails && editTextarea) {
+  editDetails.addEventListener("toggle", () => {
+    if (!editDetails.open) return;
+
+    editTextarea.focus();
+    editTextarea.setSelectionRange(editTextarea.value.length, editTextarea.value.length);
+  });
+}

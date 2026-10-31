@@ -963,3 +963,120 @@ code {
     width: 100%;
   }
 }
+
+/* ---------- 10. РЕДАКТОР ПОСТА (иконка-карандаш) ---------- */
+
+.post__head {
+  position: relative;
+}
+
+/* Оставляем место в правом верхнем углу поста под карандаш */
+.post__head .post {
+  padding-right: 58px;
+}
+
+/* Сам карандаш: кнопка-«чип», висит в углу поста */
+.editor__toggle {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  background: rgba(18, 16, 30, 0.92);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.editor__toggle::-webkit-details-marker {
+  display: none;
+}
+
+.editor__toggle:hover {
+  color: var(--text);
+  border-color: rgba(139, 92, 255, 0.65);
+  background: rgba(139, 92, 255, 0.18);
+  transform: translateY(-1px);
+}
+
+.editor[open] .editor__toggle {
+  color: #fff;
+  border-color: rgba(139, 92, 255, 0.9);
+  background: linear-gradient(120deg, rgba(139, 92, 255, 0.9), rgba(255, 93, 143, 0.75));
+}
+
+.editor__pencil {
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* Форма редактора появляется под постом */
+.editor__form {
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px dashed rgba(139, 92, 255, 0.45);
+  border-radius: 16px;
+  background: rgba(139, 92, 255, 0.07);
+  animation: fadeIn 0.3s ease both;
+}
+
+.input--edit {
+  min-height: 190px;
+  margin-top: 8px;
+  font-size: 14.5px;
+}
+
+.editor__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.editor__counter {
+  font-size: 12.5px;
+  color: rgba(167, 163, 194, 0.85);
+}
+
+.button--save {
+  background: linear-gradient(120deg, var(--violet), var(--pink));
+  box-shadow: 0 12px 26px rgba(139, 92, 255, 0.28);
+  font-size: 14.5px;
+  padding: 11px 18px;
+}
+
+.button--save:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 32px rgba(255, 93, 143, 0.32);
+}
+
+.editor__hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: rgba(167, 163, 194, 0.7);
+}
+
+/* На телефоне оставляем только иконку, чтобы не сжимать текст поста */
+@media (max-width: 520px) {
+  .editor__text {
+    display: none;
+  }
+
+  .editor__toggle {
+    padding: 8px 10px;
+  }
+
+  .post__head .post {
+    padding-right: 50px;
+  }
+}
